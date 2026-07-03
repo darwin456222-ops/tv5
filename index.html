@@ -9,14 +9,14 @@
             margin: 0;
             padding: 0;
             box-sizing: border-box;
-            user-select: none; /* Metin seçimini engeller */
+            user-select: none;
         }
         body {
             background-color: #1a1a2e;
             color: white;
             font-family: sans-serif;
-            overflow: hidden; /* Kaydırmayı engeller */
-            touch-action: none; /* Mobil tarayıcı kaydırmasını engeller */
+            overflow: hidden;
+            touch-action: none; 
         }
         #ui-container {
             position: absolute;
@@ -91,40 +91,49 @@
         const scoreDisplay = document.getElementById('score-display');
         
         let width = window.innerWidth;
-        let height = window.innerHeight - 120; // Alt butonlar için alan bırak
+        let height = window.innerHeight - 120; 
         canvas.width = width;
         canvas.height = height;
 
         const laneWidth = width / 3;
-        const hitZoneY = height - 50; // Notaların vurulması gereken hedef çizgisi
+        const hitZoneY = height - 50; 
         const noteSpeed = 5; 
         
         let score = 0;
         let notes = [];
         let gameRunning = false;
 
-        // Ses API Değişkenleri
-        let audioCtx, analyser, source;
+        let audioCtx, analyser, source, delayNode;
         let dataArray;
         let lastSpawnTime = 0;
 
-        // MP3 Yüklendiğinde
         upload.addEventListener('change', function(e) {
             const file = e.target.files[0];
             if (!file) return;
 
-            // Dosyayı okuyup çalmak için URL oluştur
             const audioUrl = URL.createObjectURL(file);
             const audio = new Audio(audioUrl);
             audio.crossOrigin = "anonymous";
 
-            // Web Audio API Kurulumu
+            // Web Audio API ve Geciktirici (Delay) Kurulumu
             audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             analyser = audioCtx.createAnalyser();
             source = audioCtx.createMediaElementSource(audio);
             
+            // Sesi maksimum 5 saniye geciktirebilecek bir düğüm oluştur
+            delayNode = audioCtx.createDelay(5.0);
+
+            // Gecikme süresini hesapla (60 FPS varsayımıyla saniye cinsinden)
+            const fallDistance = hitZoneY + 50; 
+            const fallTime = (fallDistance / noteSpeed) / 60; 
+            delayNode.delayTime.value = fallTime;
+
+            // 1. Sesi analizöre gönder (Nota üretimi anında başlar)
             source.connect(analyser);
-            analyser.connect(audioCtx.destination);
+            
+            // 2. Sesi geciktiriciye gönder, oradan da hoparlöre ver (Müzik geç çalar)
+            source.connect(delayNode);
+            delayNode.connect(audioCtx.destination);
             
             analyser.fftSize = 256;
             const bufferLength = analyser.frequencyBinCount;
@@ -132,12 +141,11 @@
 
             audio.play();
             gameRunning = true;
-            upload.style.display = 'none'; // Oyunu başlatınca yükle butonunu gizle
+            upload.style.display = 'none'; 
             
             gameLoop();
         });
 
-        // Oyuncu Butonlara Bastığında (Dokunmatik ekran için touchstart)
         const hitButtons = [
             document.getElementById('btn-0'),
             document.getElementById('btn-1'),
@@ -145,25 +153,23 @@
         ];
 
         hitButtons.forEach((btn, index) => {
-            // Hem telefonda dokunma hem bilgisayarda fare tıklaması için
-            btn.addEventListener('touchstart', () => checkHit(index));
+            btn.addEventListener('touchstart', (e) => {
+                e.preventDefault(); // Ekranın kaymasını engeller
+                checkHit(index);
+            });
             btn.addEventListener('mousedown', () => checkHit(index));
         });
 
-        // Nota Vurma Kontrolü
         function checkHit(laneIndex) {
-            // İlgili şeritteki ve vurma bölgesindeki (hit zone) en yakın notayı bul
-            const hitMargin = 80; // Vurma toleransı
+            const hitMargin = 80; 
             
             for (let i = 0; i < notes.length; i++) {
                 let note = notes[i];
                 if (note.lane === laneIndex && Math.abs(note.y - hitZoneY) < hitMargin) {
-                    // Nota başarıyla vuruldu!
                     score += 10;
                     scoreDisplay.innerText = `Puan: ${score}`;
-                    notes.splice(i, 1); // Notayı ekrandan sil
+                    notes.splice(i, 1); 
                     
-                    // Butona basıldığında anlık görsel efekt (parlama)
                     hitButtons[laneIndex].style.backgroundColor = "rgba(233, 69, 96, 0.8)";
                     setTimeout(() => {
                         hitButtons[laneIndex].style.backgroundColor = "rgba(255, 255, 255, 0.1)";
@@ -174,64 +180,54 @@
             }
         }
 
-        // Oyun Döngüsü
         function gameLoop() {
             if (!gameRunning) return;
             requestAnimationFrame(gameLoop);
 
             ctx.clearRect(0, 0, width, height);
 
-            // Hedef çizgisini çiz
             ctx.fillStyle = "rgba(255, 255, 255, 0.3)";
             ctx.fillRect(0, hitZoneY - 20, width, 40);
 
-            // Şerit çizgilerini çiz
             ctx.strokeStyle = "rgba(255, 255, 255, 0.1)";
             ctx.beginPath();
             ctx.moveTo(laneWidth, 0); ctx.lineTo(laneWidth, height);
             ctx.moveTo(laneWidth * 2, 0); ctx.lineTo(laneWidth * 2, height);
             ctx.stroke();
 
-            // Müziği analiz et ve nota üret
             analyser.getByteFrequencyData(dataArray);
             
-            // Bas (düşük frekans) vuruşlarını kontrol et
             let bassSum = 0;
             for (let i = 0; i < 10; i++) {
                 bassSum += dataArray[i];
             }
             let bassAverage = bassSum / 10;
 
-            // Eğer bas kuvvetliyse ve son notadan bu yana belli bir süre geçtiyse yeni nota oluştur
             const now = Date.now();
             if (bassAverage > 200 && now - lastSpawnTime > 300) { 
-                const randomLane = Math.floor(Math.random() * 3); // 0, 1 veya 2
+                const randomLane = Math.floor(Math.random() * 3); 
                 notes.push({ x: randomLane * laneWidth + (laneWidth / 2), y: -50, lane: randomLane });
                 lastSpawnTime = now;
             }
 
-            // Notaları hareket ettir ve çiz
             for (let i = notes.length - 1; i >= 0; i--) {
                 let note = notes[i];
                 note.y += noteSpeed;
 
-                // Notayı çiz (Daire şeklinde)
                 ctx.beginPath();
                 ctx.arc(note.x, note.y, laneWidth * 0.3, 0, Math.PI * 2);
-                ctx.fillStyle = "#0f3460"; // Lacivert iç
+                ctx.fillStyle = "#0f3460"; 
                 ctx.fill();
                 ctx.lineWidth = 5;
-                ctx.strokeStyle = "#e94560"; // Pembe/Kırmızı çerçeve
+                ctx.strokeStyle = "#e94560"; 
                 ctx.stroke();
 
-                // Nota ekranın altına düşerse (vurulamazsa) diziden sil
                 if (note.y > height + 50) {
                     notes.splice(i, 1);
                 }
             }
         }
         
-        // Cihaz yan çevrilirse ekranı güncelle
         window.addEventListener('resize', () => {
             width = window.innerWidth;
             height = window.innerHeight - 120;
